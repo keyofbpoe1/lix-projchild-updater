@@ -16,6 +16,7 @@ When a webhook is triggered:
    - Current date
    - Calculated progress
    - Descriptive summary
+   - Detailed breakdown of all child projects (name, progress, description)
 
 ---
 
@@ -23,11 +24,23 @@ When a webhook is triggered:
 
 - Every child project is included
 - `projectStatus: null` → treated as `progress = 0`
+
+- `description: null` → replaced with:
+  "0 applications related to this project (0%) have been marked as completed."
 - Formula:
 
 ```
 overallProgress = sum(child progresses) / total children
 ```
+
+Each child project is listed in the description using the format:
+
+- {Project Name}: {Progress}% — {Description}
+
+Example:
+
+- CRM Upgrade: 100% — Completed rollout
+- Data Migration: 0% — 0 applications related to this project (0%) have been marked as completed.
 
 ---
 
@@ -37,7 +50,7 @@ overallProgress = sum(child progresses) / total children
 {
   "projectId": "123",
   "overallProgress": 67,
-  "description": "3 child projects with an average completion of 67%. This value is calculated as the mean of all child project progress values, with missing progress treated as 0%."
+  "description": "3 child projects with an average completion of 67%.\nThis value is calculated as the mean of all child project progress values, with missing progress treated as 0%.\n\nSub-project breakdown:\n- Project A: 100% — Completed rollout\n- Project B: 50% — In progress\n- Project C: 0% — 0 applications related to this project (0%) have been marked as completed."
 }
 ```
 
@@ -133,6 +146,7 @@ https://your-render-service.onrender.com/leanix-webhook
 - Handles missing data safely
 - Automatically updates LeanIX Project status
 - Built for webhook-driven automation
+- Includes detailed sub-project breakdown in the status description
 
 ---
 

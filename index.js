@@ -13,7 +13,7 @@ const {
 } = process.env;
 
 // ======================================================
-// Get OAuth Token
+// Get OAuth Token from LeanIX
 // ======================================================
 async function getAccessToken() {
   const res = await axios.post(
@@ -34,7 +34,7 @@ async function getAccessToken() {
 }
 
 // ======================================================
-// Run GraphQL
+// Generic GraphQL runner
 // ======================================================
 async function runGraphQL(query, variables, token) {
   const res = await axios.post(
@@ -48,6 +48,7 @@ async function runGraphQL(query, variables, token) {
     }
   );
 
+  // Handle GraphQL errors
   if (res.data.errors) {
     console.error(JSON.stringify(res.data.errors, null, 2));
     throw new Error("GraphQL failed");
@@ -57,7 +58,7 @@ async function runGraphQL(query, variables, token) {
 }
 
 // ======================================================
-// Query: Parent + Children + Progress
+// Query: Get parent project + its children + progress
 // ======================================================
 async function getProjectWithChildren(factSheetId, token) {
   const query = `
@@ -77,6 +78,7 @@ async function getProjectWithChildren(factSheetId, token) {
                       edges {
                         node {
                           progress
+                          description
                         }
                       }
                     }
@@ -95,7 +97,7 @@ async function getProjectWithChildren(factSheetId, token) {
 }
 
 // ======================================================
-// Calculate Overall Progress
+// Calculate overall progress + build child data
 // ======================================================
 function calculateOverallProgress(project) {
   const edges = project.relToChild?.edges || [];
@@ -105,22 +107,31 @@ function calculateOverallProgress(project) {
     .filter(child => child);
 
   const total = children.length;
-
   let sumProgress = 0;
 
+  // Format each child project
   const formattedChildren = children.map(child => {
-    const progress =
-      child.projectStatus?.edges?.[0]?.node?.progress ?? 0;
+    const statusNode = child.projectStatus?.edges?.[0]?.node;
+
+    // Default progress = 0 if missing
+    const progress = statusNode?.progress ?? 0;
+
+    // Default description if missing
+    const description =
+      statusNode?.description ??
+      "0 applications related to this project (0%) have been marked as completed.";
 
     sumProgress += progress;
 
     return {
       id: child.id,
       name: child.name,
-      progress
+      progress,
+      description
     };
   });
 
+  // Calculate average progress
   const overall =
     total === 0 ? 0 : Math.round(sumProgress / total);
 
@@ -173,39 +184,60 @@ async function updateProjectStatus(factSheetId, statusValue, token) {
 // ======================================================
 app.post("/leanix-webhook", async (req, res) => {
   try {
+    // Extract Fact Sheet ID from webhook payload
     const factSheetId = req.body?.factSheet?.id;
 
     if (!factSheetId) {
       return res.status(400).send("Fact sheet ID missing");
     }
 
+    // Step 1: Authenticate
     const token = await getAccessToken();
 
+    // Step 2: Fetch parent + children
     const project = await getProjectWithChildren(factSheetId, token);
 
     if (!project) {
       return res.status(200).send("Not a Project");
     }
 
-    // ✅ Calculate overall progress
+    // Step 3: Calculate statistics
     const stats = calculateOverallProgress(project);
 
     const todayISO = new Date().toISOString().split("T")[0];
 
-    // ✅ Build description
-    const description = `${stats.totalChildren} child projects with an average completion of ${stats.overallProgress}%. This value is calculated as the mean of all child project progress values, with missing progress treated as 0%.`;
+    // ======================================================
+    // Build Sub-Project Breakdown List
+    // ======================================================
+    const childDetails = stats.children
+      .map(
+        c =>
+          `- ${c.name}: ${c.progress}% — ${c.description}`
+      )
+      .join("\n");
 
-    // ✅ Build statusValue
+    // ======================================================
+    // Build Final Description (includes list of children)
+    // ======================================================
+    const description = `${stats.totalChildren} child projects with an average completion of ${stats.overallProgress}%.
+This value is calculated as the mean of all child project progress values, with missing progress treated as 0%.
+
+Sub-project breakdown:
+${childDetails}`;
+
+    // ======================================================
+    // Build Project Status Payload
+    // ======================================================
     const statusValue = JSON.stringify({
       date: todayISO,
       description,
       progress: stats.overallProgress
     });
 
-    // ✅ Run mutation
+    // Step 4: Update parent project status
     await updateProjectStatus(factSheetId, statusValue, token);
 
-    // ✅ Response
+    // Step 5: Return response
     res.status(200).json({
       projectId: project.id,
       projectName: project.name,
